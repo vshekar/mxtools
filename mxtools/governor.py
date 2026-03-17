@@ -1,90 +1,89 @@
 """
-    Rationale:
+Rationale:
 
-    The Governor is a dynamic beast. The PVs it exposes depend
-    on the configuration files given to it. Therefore, it would be
-    hopelessly tedious to manually keep a Governor ophyd object in
-    sync with the Governor IOC. There are at least two solutions to
-    this issue:
+The Governor is a dynamic beast. The PVs it exposes depend
+on the configuration files given to it. Therefore, it would be
+hopelessly tedious to manually keep a Governor ophyd object in
+sync with the Governor IOC. There are at least two solutions to
+this issue:
 
-    1. Have the IOC auto-generate Governor ohpyd objects
+1. Have the IOC auto-generate Governor ohpyd objects
 
-    This would require the IOC to produce a Python file (perhaps via
-    Jinja) and then to, somehow, synchronize this file with the rest
-    of the startup files for the beamline.
+This would require the IOC to produce a Python file (perhaps via
+Jinja) and then to, somehow, synchronize this file with the rest
+of the startup files for the beamline.
 
-    2. Have the ophyd object be dynamically generated at startup time
+2. Have the ophyd object be dynamically generated at startup time
 
-    No modifications to the IOC would be required, as long as the IOC
-    exports enough metadata. The downside of this approach is that
-    there is some encapsulation leakage (direct cagets) and there's
-    a risk that the Governor IOC won't be up when this function runs.
+No modifications to the IOC would be required, as long as the IOC
+exports enough metadata. The downside of this approach is that
+there is some encapsulation leakage (direct cagets) and there's
+a risk that the Governor IOC won't be up when this function runs.
 
-    We take approach #2 here, with the hope that the benefits will
-    outweight the drawbacks.
+We take approach #2 here, with the hope that the benefits will
+outweight the drawbacks.
 
-    NOTE: given that the Governor ophyd object is created dynamically,
-    the Governor IOC *must be running* when this file runs.
+NOTE: given that the Governor ophyd object is created dynamically,
+the Governor IOC *must be running* when this file runs.
 
-    The overall available auto-generated API will be as follows
-    (all leafs are EpicsSignals):
+The overall available auto-generated API will be as follows
+(all leafs are EpicsSignals):
 
-    govs = _make_governors('XF:19IDC-ES', name='govs')
+govs = _make_governors('XF:19IDC-ES', name='govs')
 
-    #
-    # Global Governor control
-    #
+#
+# Global Governor control
+#
 
-    # Controls whether any Governor is active or not:
-    govs.sel.active
+# Controls whether any Governor is active or not:
+govs.sel.active
 
-    # Selects which Governor to use ("Human", "Robot"):
-    govs.sel.config
+# Selects which Governor to use ("Human", "Robot"):
+govs.sel.config
 
-    # Alias for the Robot configuration
-    gov_rbt = govs.gov.Robot
+# Alias for the Robot configuration
+gov_rbt = govs.gov.Robot
 
-    #
-    # Meta-data
-    #
+#
+# Meta-data
+#
 
-    # Current state
-    gov_rbt.state
+# Current state
+gov_rbt.state
 
-    # All existing states
-    gov_rbt.states
+# All existing states
+gov_rbt.states
 
-    # All existing devices
-    gov_rbt.devices
+# All existing devices
+gov_rbt.devices
 
-    # All currently reachable states
-    gov_rbt.reachable
+# All currently reachable states
+gov_rbt.reachable
 
-    # All targets of the device "bsy"
-    gov_rbt.dev.bsy.targets
+# All targets of the device "bsy"
+gov_rbt.dev.bsy.targets
 
-    #
-    # Per-device configuration
-    #
+#
+# Per-device configuration
+#
 
-    # Position for target "Down" of device "bsy"
-    gov_rbt.dev.bsy.target_Down
+# Position for target "Down" of device "bsy"
+gov_rbt.dev.bsy.target_Down
 
-    # Low limit of device "bsy" when at state "SE"
-    gov_rbt.dev.bsy.at_SE.low
+# Low limit of device "bsy" when at state "SE"
+gov_rbt.dev.bsy.at_SE.low
 
-    # Pos for high limit of device "bsy" when at state "SE":
-    gov_rbt.dev.bsy.at_SE.high
+# Pos for high limit of device "bsy" when at state "SE":
+gov_rbt.dev.bsy.at_SE.high
 
-    #
-    # Changing state
-    #
+#
+# Changing state
+#
 
-    # Attempt to move the Governor to the SE state
-    # (behaves as a positioner)
-    RE(bps.abs_set(gov_rbt, 'SE', wait=True))
+# Attempt to move the Governor to the SE state
+# (behaves as a positioner)
+RE(bps.abs_set(gov_rbt, 'SE', wait=True))
 """
-
 
 from typing import Dict, List
 

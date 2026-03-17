@@ -114,5 +114,3 @@ class MXRasterFlyer(MXFlyer):
             num_images=None,
             num_images_per_file=kwargs["num_images_per_file"],
         )
-
-
