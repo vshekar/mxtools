@@ -93,14 +93,6 @@ class MXFlyer:
             "filled": {key: False for key in data},
         }
 
-    # def collect_asset_docs(self):
-    #     # items = list(self._asset_docs_cache)
-    #     items = list(self.detector.file._asset_docs_cache)
-    #     print(f"{print_now()} items:\n{items}")
-    #     self.detector.file._asset_docs_cache.clear()
-    #     for item in items:
-    #         yield item
-
     def collect_asset_docs(self):
         asset_docs_cache = []
 
@@ -241,17 +233,41 @@ class MXFlyer:
         )
 
     def detector_arm(self, **kwargs):
-        start = kwargs["angle_start"]
-        width = kwargs["img_width"]
-        num_images = kwargs["num_images"]
-        exposure_per_image = kwargs["exposure_period_per_image"]
-        file_prefix = kwargs["file_prefix"]
-        data_directory_name = kwargs["data_directory_name"]
-        file_number_start = kwargs["file_number_start"]
-        x_beam = kwargs["x_beam"]
-        y_beam = kwargs["y_beam"]
-        wavelength = kwargs["wavelength"]
-        det_distance_m = kwargs["det_distance_m"]
+        return self._arm_detector(
+            start=kwargs["angle_start"],
+            width=kwargs["img_width"],
+            exposure_per_image=kwargs["exposure_period_per_image"],
+            file_prefix=kwargs["file_prefix"],
+            data_directory_name=kwargs["data_directory_name"],
+            file_number_start=kwargs["file_number_start"],
+            x_beam=kwargs["x_beam"],
+            y_beam=kwargs["y_beam"],
+            wavelength=kwargs["wavelength"],
+            det_distance_m=kwargs["det_distance_m"],
+            trigger_mode=eiger.EXTERNAL_SERIES,
+            num_triggers=1,
+            num_images=kwargs["num_images"],
+            num_images_per_file=500,
+        )
+
+    def _arm_detector(
+        self,
+        *,
+        start,
+        width,
+        exposure_per_image,
+        file_prefix,
+        data_directory_name,
+        file_number_start,
+        x_beam,
+        y_beam,
+        wavelength,
+        det_distance_m,
+        trigger_mode,
+        num_triggers,
+        num_images=None,
+        num_images_per_file=500,
+    ):
 
         self.detector.cam.save_files.put(1)
         self.detector.cam.file_owner.put(getpass.getuser())
@@ -263,9 +279,10 @@ class MXFlyer:
         self.detector.cam.acquire_time.put(exposure_per_image)
         self.detector.cam.acquire_period.put(exposure_per_image)
         # Trigger mode set before num_images due to updates in Eiger REST API
-        self.detector.cam.trigger_mode.put(eiger.EXTERNAL_SERIES)
-        self.detector.cam.num_images.put(num_images)
-        self.detector.cam.num_triggers.put(1)
+        self.detector.cam.trigger_mode.put(trigger_mode)
+        if num_images is not None:
+            self.detector.cam.num_images.put(num_images)
+        self.detector.cam.num_triggers.put(num_triggers)
         self.detector.cam.file_path.put(data_directory_name)
         self.detector.cam.fw_name_pattern.put(f"{file_prefix_minus_directory}_$id")
 
@@ -279,7 +296,7 @@ class MXFlyer:
         self.detector.cam.wavelength.put(wavelength)
         self.detector.cam.det_distance.put(det_distance_m)
 
-        self.detector.file.file_write_images_per_file.put(500)
+        self.detector.file.file_write_images_per_file.put(num_images_per_file)
 
         def armed_callback(value, old_value, **kwargs):
             if old_value == 0 and value == 1:
