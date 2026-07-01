@@ -178,8 +178,8 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
         if not os.path.isfile(self._master_file):
             raise RuntimeError(f"File {self._master_file} does not exist")
 
-        resource_uid_image = image_resource["uid"]          # reuse existing uid
-        resource_uid_omega = str(uuid.uuid4())              # fresh uid for omega
+        resource_uid_image = image_resource["uid"]  # reuse existing uid
+        resource_uid_omega = str(uuid.uuid4())  # fresh uid for omega
 
         image_resource_doc = {
             "uid": resource_uid_image,
@@ -207,8 +207,18 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
         return (
             ("resource", image_resource_doc),
             ("resource", omega_resource_doc),
-            ("datum", {"resource": resource_uid_image, "datum_id": datum_id_image, "datum_kwargs": {"data_key": "data"}}),
-            ("datum", {"resource": resource_uid_omega, "datum_id": datum_id_omega, "datum_kwargs": {"data_key": "omega"}}),
+            (
+                "datum",
+                {"resource": resource_uid_image, "datum_id": datum_id_image, "datum_kwargs": {"data_key": "data"}},
+            ),
+            (
+                "datum",
+                {
+                    "resource": resource_uid_omega,
+                    "datum_id": datum_id_omega,
+                    "datum_kwargs": {"data_key": "omega"},
+                },
+            ),
         )
 
     def _extract_metadata(self, field="omega"):
