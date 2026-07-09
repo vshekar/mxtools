@@ -128,6 +128,7 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
             f"{self.detector.name}_image": {
                 "source": f"{self.detector.name}_data",
                 "dtype": "array",
+                "dtype_numpy": "<u2",
                 "shape": [
                     self.cam.num_images.get(),
                     self.cam.array_size.array_size_y.get(),
@@ -139,6 +140,7 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
             "omega": {
                 "source": f"{self.detector.name}_omega",
                 "dtype": "array",
+                "dtype_numpy": "<f8",
                 "shape": [self.cam.num_images.get()],
                 "dims": ["images"],
                 "external": "FILESTORE:",
@@ -174,9 +176,18 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
         resource_path = image_resource["resource_path"]
         seq_id = int(self.cam.sequence_id.get())
 
+        # Build the full absolute path to the master .h5 file. The resources are
+        # emitted with root="" and this absolute path in resource_path, so the
+        # StreamResource uri (root + resource_path) resolves directly to the
+        # master file with no downstream patching.
         self._master_file = f"{root}/{resource_path}_{seq_id}_master.h5"
         if not os.path.isfile(self._master_file):
             raise RuntimeError(f"File {self._master_file} does not exist")
+
+        # Number of frames in this acquisition. On the standard path the
+        # detector is armed with an explicit num_images, so this is reliable
+        # here and is used to build StreamDatum indices {start: 0, stop: N}.
+        num_images = int(self.cam.num_images.get())
 
         resource_uid_image = image_resource["uid"]  # reuse existing uid
         resource_uid_omega = str(uuid.uuid4())  # fresh uid for omega
@@ -184,16 +195,16 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
         image_resource_doc = {
             "uid": resource_uid_image,
             "spec": "AD_EIGER_MX",
-            "root": root,
-            "resource_path": resource_path,
+            "root": "",
+            "resource_path": self._master_file,
             "resource_kwargs": {"seq_id": seq_id, "dataset": "entry/data"},
             "path_semantics": "posix",
         }
         omega_resource_doc = {
             "uid": resource_uid_omega,
             "spec": "AD_EIGER_MX_OMEGA",
-            "root": root,
-            "resource_path": resource_path,
+            "root": "",
+            "resource_path": self._master_file,
             "resource_kwargs": {"seq_id": seq_id, "dataset": "entry/sample/goniometer/omega"},
             "path_semantics": "posix",
         }
@@ -209,14 +220,18 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
             ("resource", omega_resource_doc),
             (
                 "datum",
-                {"resource": resource_uid_image, "datum_id": datum_id_image, "datum_kwargs": {"data_key": "data"}},
+                {
+                    "resource": resource_uid_image,
+                    "datum_id": datum_id_image,
+                    "datum_kwargs": {"data_key": "data", "indices": {"start": 0, "stop": num_images}},
+                },
             ),
             (
                 "datum",
                 {
                     "resource": resource_uid_omega,
                     "datum_id": datum_id_omega,
-                    "datum_kwargs": {"data_key": "omega"},
+                    "datum_kwargs": {"data_key": "omega", "indices": {"start": 0, "stop": num_images}},
                 },
             ),
         )

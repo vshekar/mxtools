@@ -13,11 +13,15 @@ class EigerHandlerMX(HandlerBase):
 
     def __init__(self, fpath, seq_id):
         self._seq_id = seq_id
-        # From https://github.com/bluesky/area-detector-handlers/blob/0f47155b31a6b4bf92c1c2b6fe98b5f141194c78/area_detector_handlers/eiger.py#L84  # noqa
+        # The resource_path emitted by the device now already includes the
+        # ``_{seq_id}_master.h5`` suffix, so ``fpath`` points directly at the
+        # master file. Do NOT re-append the suffix here (that would produce
+        # ``..._N_master.h5_N_master.h5``).
         #
-        #         master_path = Path(f'{self._file_prefix}_{seq_id}_master.h5').absolute()
-        #
-        self._fpath = pathlib.Path(f"{fpath}_{seq_id}_master.h5").absolute()
+        # NOTE: pre-migration archived runs emitted a bare resource_path and
+        # will not resolve with this handler. They must be read via the legacy
+        # path or a versioned handler.
+        self._fpath = pathlib.Path(fpath).absolute()
         if not self._fpath.is_file():
             raise RuntimeError(f"File {self._fpath} does not exist")
 

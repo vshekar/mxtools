@@ -1,5 +1,7 @@
 import logging
+import os
 import time as ttime
+import uuid
 
 from ophyd.sim import NullStatus
 
@@ -13,6 +15,14 @@ class MXRasterFlyer(MXFlyer):
     def __init__(self, vector, zebra, detector) -> None:
         self.name = "MXRasterFlyer"
         super().__init__(vector, zebra, detector)
+        # Raster arms the detector once for the whole scan (one master .h5),
+        # but the RunEngine calls collect_asset_docs once per row. The staged
+        # Resource is only cached once, so we capture it on row 0 and re-emit a
+        # per-row Resource (differing only in the ``dataset`` key) for each row.
+        self._staged_resource = None
+        self._row_index = 0
+        self._row_positions = {}
+        self._num_images = None
 
     def kickoff(self):
         # ttime.sleep(0.2)  # TODO see if vector starts ok without this sleep
@@ -23,8 +33,21 @@ class MXRasterFlyer(MXFlyer):
         logger.debug("starting updating parameters")
         self.configure_vector(**kwargs)
         row_index = kwargs.get("row_index", 0)
+        self._row_index = row_index
+        self._num_images = kwargs["num_images"]
+        self._row_positions = {
+            "x_start": kwargs["x_start_um"],
+            "x_end": kwargs["x_end_um"],
+            "y_start": kwargs["y_start_um"],
+            "y_end": kwargs["y_end_um"],
+            "z_start": kwargs["z_start_um"],
+            "z_end": kwargs["z_end_um"],
+        }
         if row_index == 0:
             logger.debug("row 0: fully configuring zebra")
+            # New scan: force re-reading the staged Resource on the next
+            # collect_asset_docs call.
+            self._staged_resource = None
             self.configure_zebra(**kwargs)
         else:
             numImages = kwargs["num_images"]
@@ -114,3 +137,133 @@ class MXRasterFlyer(MXFlyer):
             num_images=None,
             num_images_per_file=kwargs["num_images_per_file"],
         )
+
+    def collect_asset_docs(self):
+        """Emit one Resource + one Datum per raster row.
+
+        The detector is armed once for the whole raster, producing a single
+        master ``.h5`` whose ``entry/data`` group holds one linked dataset per
+        row (``data_000001``, ``data_000002``, ...). Because the underlying
+        ophyd FileStore cache is drained on the first ``collect_asset_docs``
+        call, we cache the staged Resource on row 0 and re-emit a per-row
+        Resource for every row, differing only in the ``dataset`` kwarg which
+        points at that row's dataset key.
+        """
+        detector = self.detector
+
+        # Row 0: drain the single staged Resource and remember its location.
+        if self._staged_resource is None:
+            ((_, staged_resource),) = detector.file.collect_asset_docs()
+            root = staged_resource["root"]
+            resource_path = staged_resource["resource_path"]
+            seq_id = int(detector.cam.sequence_id.get())
+            master_file = f"{root}/{resource_path}_{seq_id}_master.h5"
+            if not os.path.isfile(master_file):
+                raise RuntimeError(f"File {master_file} does not exist")
+            self._staged_resource = {
+                "seq_id": seq_id,
+                "master_file": master_file,
+            }
+
+        seq_id = self._staged_resource["seq_id"]
+        # Full absolute path to the master .h5 file. Emitted with root="" so the
+        # StreamResource uri (root + resource_path) resolves directly to it.
+        master_file = self._staged_resource["master_file"]
+        # Keep the master file reference available for any downstream use.
+        detector._master_file = master_file
+
+        # Number of frames in this raster row (same for every row). Used to
+        # build StreamDatum indices {start: 0, stop: M}. Falls back to the cam
+        # value if the per-row count was not supplied.
+        num_images = self._num_images
+        if num_images is None:
+            num_images = int(detector.cam.num_images.get())
+
+        # Row N maps to the (N + 1)-th linked dataset inside the master file.
+        # This is a single linked DATASET (not the entry/data group), so it is
+        # routed to the plain application/x-hdf5 adapter via a distinct spec
+        # (AD_EIGER_MX_RASTER), avoiding the eiger link-expanding adapter which
+        # walks .keys() on a group.
+        dataset = f"entry/data/data_{self._row_index + 1:06d}"
+
+        resource_uid = str(uuid.uuid4())
+        resource_doc = {
+            "uid": resource_uid,
+            "spec": "AD_EIGER_MX_RASTER",
+            "root": "",
+            "resource_path": master_file,
+            "resource_kwargs": {"seq_id": seq_id, "dataset": dataset},
+            "path_semantics": "posix",
+        }
+
+        datum_id = f"{resource_uid}/data"
+        detector._datum_ids["data"] = datum_id
+        detector._datum_ids["omega"] = None
+
+        return (
+            ("resource", resource_doc),
+            (
+                "datum",
+                {
+                    "resource": resource_uid,
+                    "datum_id": datum_id,
+                    "datum_kwargs": {"data_key": "data", "indices": {"start": 0, "stop": num_images}},
+                },
+            ),
+        )
+
+    def describe_collect(self):
+        detector = self.detector
+        # In EXTERNAL_ENABLE mode the detector is armed with num_images=None, so
+        # cam.num_images does not reflect the per-row frame count. Use the value
+        # supplied per row via update_parameters (number of steps in the row).
+        num_images_per_row = self._num_images
+        if num_images_per_row is None:
+            num_images_per_row = detector.cam.num_images.get()
+        # Return the FLAT {data_key: DataKey} mapping (no stream-name wrapper).
+        # bps.declare_stream(collect=True) supplies the stream name itself; a
+        # nested {"primary": {...}} return makes bluesky treat "primary" as a
+        # data_key and inject object_name into it, failing descriptor validation.
+        # num_images_per_row is no longer used in the image shape (per-frame
+        # shape below), but is retained above for backward reference.
+        _ = num_images_per_row
+        return {
+            f"{detector.name}_image": {
+                "source": f"{detector.name}_data",
+                "dtype": "array",
+                "dtype_numpy": "<u2",
+                # Per-frame shape. The row's frame count is inferred downstream
+                # from the StreamDatum indices; the consolidator stacks frames
+                # into (num_images_per_row, row, column).
+                "shape": [
+                    detector.cam.array_size.array_size_y.get(),
+                    detector.cam.array_size.array_size_x.get(),
+                ],
+                "dims": ["row", "column"],
+                "external": "FILESTORE:",
+            },
+            # Plan-supplied row start/end positions. These are not stored in the
+            # master file and are not per-frame, so they stay as in-event scalars.
+            "x_start": {"source": f"{self.name}_x_start", "dtype": "number", "dtype_numpy": "<f8", "shape": [], "dims": []},
+            "x_end": {"source": f"{self.name}_x_end", "dtype": "number", "dtype_numpy": "<f8", "shape": [], "dims": []},
+            "y_start": {"source": f"{self.name}_y_start", "dtype": "number", "dtype_numpy": "<f8", "shape": [], "dims": []},
+            "y_end": {"source": f"{self.name}_y_end", "dtype": "number", "dtype_numpy": "<f8", "shape": [], "dims": []},
+            "z_start": {"source": f"{self.name}_z_start", "dtype": "number", "dtype_numpy": "<f8", "shape": [], "dims": []},
+            "z_end": {"source": f"{self.name}_z_end", "dtype": "number", "dtype_numpy": "<f8", "shape": [], "dims": []},
+        }
+
+    def collect(self):
+        # Unlike the standard flyer we do NOT unstage here (the detector stays
+        # armed across all rows and is unstaged once by the plan at the end) and
+        # we do not read omega metadata from the master file.
+        now = ttime.time()
+        data = {
+            f"{self.detector.name}_image": self.detector._datum_ids["data"],
+            **self._row_positions,
+        }
+        yield {
+            "data": data,
+            "timestamps": {key: now for key in data},
+            "time": now,
+            "filled": {f"{self.detector.name}_image": False},
+        }

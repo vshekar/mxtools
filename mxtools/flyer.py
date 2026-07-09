@@ -12,7 +12,6 @@ from ophyd.status import SubscriptionStatus
 from . import eiger
 
 logger = logging.getLogger(__name__)
-DEFAULT_DATUM_DICT = {"data": None, "omega": None}
 
 
 class MXFlyer:
@@ -24,10 +23,6 @@ class MXFlyer:
 
         self._asset_docs_cache = deque()
         self._resource_uids = []
-        self._datum_counter = None
-        self._datum_ids = DEFAULT_DATUM_DICT
-        self._master_file = None
-        self._master_metadata = []
 
         self._collection_dictionary = None
 
@@ -62,19 +57,24 @@ class MXFlyer:
             f"{self.detector.name}_image": {
                 "source": f"{self.detector.name}_data",
                 "dtype": "array",
+                "dtype_numpy": "<u2",
+                # Per-frame shape. Total frame count is inferred downstream
+                # from the StreamDatum indices, so this describes a single
+                # frame; the consolidator stacks frames into (N, row, column).
                 "shape": [
-                    self.detector.cam.num_images.get(),
                     self.detector.cam.array_size.array_size_y.get(),
                     self.detector.cam.array_size.array_size_x.get(),
                 ],
-                "dims": ["images", "row", "column"],
+                "dims": ["row", "column"],
                 "external": "FILESTORE:",
             },
             "omega": {
                 "source": f"{self.detector.name}_omega",
                 "dtype": "array",
-                "shape": [self.detector.cam.num_images.get()],
-                "dims": ["images"],
+                "dtype_numpy": "<f8",
+                # Per-frame scalar; total length inferred from StreamDatum indices.
+                "shape": [],
+                "dims": [],
                 "external": "FILESTORE:",
             },
         }
@@ -85,7 +85,7 @@ class MXFlyer:
 
         now = ttime.time()
         self._master_metadata = self._extract_metadata()
-        data = {f"{self.detector.name}_image": self._datum_ids["data"], "omega": self._datum_ids["omega"]}
+        data = {f"{self.detector.name}_image": self.detector._datum_ids["data"], "omega": self.detector._datum_ids["omega"]}
         yield {
             "data": data,
             "timestamps": {key: now for key in data},
@@ -99,8 +99,8 @@ class MXFlyer:
         return {}
 
     def _extract_metadata(self, field="omega"):
-        with h5py.File(self._master_file, "r") as hf:
-            return hf.get(f"entry/sample/goniometer/{field}")[()]
+        if self.detector:
+            return self.detector._extract_metadata(field)
 
     def unstage(self):
         ttime.sleep(1.0)
