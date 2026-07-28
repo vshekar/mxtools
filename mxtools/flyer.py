@@ -57,7 +57,7 @@ class MXFlyer:
             f"{self.detector.name}_image": {
                 "source": f"{self.detector.name}_data",
                 "dtype": "array",
-                "dtype_numpy": "<u2",
+                "dtype_numpy": "<f8",
                 # Per-frame shape. Total frame count is inferred downstream
                 # from the StreamDatum indices, so this describes a single
                 # frame; the consolidator stacks frames into (N, row, column).

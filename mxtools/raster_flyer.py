@@ -235,7 +235,7 @@ class MXRasterFlyer(MXFlyer):
             f"{detector.name}_image": {
                 "source": f"{detector.name}_data",
                 "dtype": "array",
-                "dtype_numpy": "<u2",
+                "dtype_numpy": "<f8",
                 # Per-frame shape. The row's frame count is inferred downstream
                 # from the StreamDatum indices; the consolidator stacks frames
                 # into (num_images_per_row, row, column).

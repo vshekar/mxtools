@@ -128,7 +128,7 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
             f"{self.detector.name}_image": {
                 "source": f"{self.detector.name}_data",
                 "dtype": "array",
-                "dtype_numpy": "<u2",
+                "dtype_numpy": "<f8",
                 "shape": [
                     self.cam.num_images.get(),
                     self.cam.array_size.array_size_y.get(),
