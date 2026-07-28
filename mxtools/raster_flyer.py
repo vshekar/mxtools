@@ -16,10 +16,11 @@ class MXRasterFlyer(MXFlyer):
         self.name = "MXRasterFlyer"
         super().__init__(vector, zebra, detector)
         # Raster arms the detector once for the whole scan (one master .h5),
-        # but the RunEngine calls collect_asset_docs once per row. The staged
-        # Resource is only cached once, so we capture it on row 0 and re-emit a
-        # per-row Resource (differing only in the ``dataset`` key) for each row.
+        # but the RunEngine calls collect_asset_docs once per row. A single
+        # Resource is emitted on row 0 and cached in _resource_uid; subsequent
+        # rows emit only a Datum referencing that Resource.
         self._staged_resource = None
+        self._resource_uid = None
         self._row_index = 0
         self._row_positions = {}
         self._num_images = None
@@ -48,6 +49,7 @@ class MXRasterFlyer(MXFlyer):
             # New scan: force re-reading the staged Resource on the next
             # collect_asset_docs call.
             self._staged_resource = None
+            self._resource_uid = None
             self.configure_zebra(**kwargs)
         else:
             numImages = kwargs["num_images"]
@@ -139,19 +141,21 @@ class MXRasterFlyer(MXFlyer):
         )
 
     def collect_asset_docs(self):
-        """Emit one Resource + one Datum per raster row.
+        """Emit one Resource (row 0 only) + one Datum per raster row.
 
         The detector is armed once for the whole raster, producing a single
         master ``.h5`` whose ``entry/data`` group holds one linked dataset per
-        row (``data_000001``, ``data_000002``, ...). Because the underlying
-        ophyd FileStore cache is drained on the first ``collect_asset_docs``
-        call, we cache the staged Resource on row 0 and re-emit a per-row
-        Resource for every row, differing only in the ``dataset`` kwarg which
-        points at that row's dataset key.
+        row (``data_000001``, ``data_000002``, ...).
+
+        A single StreamResource is emitted on row 0 covering the entire scan
+        (``dataset="entry/data"``, ``multiplier=num_images``,
+        ``join_method="stack"``).  Every row then emits one StreamDatum with
+        ``indices={start: row_index, stop: row_index+1}``, so the consolidated
+        shape in Tiled is ``(num_rows, num_images, Y, X)``.
         """
         detector = self.detector
 
-        # Row 0: drain the single staged Resource and remember its location.
+        # Row 0: drain the ophyd FileStore cache and build the master-file path.
         if self._staged_resource is None:
             ((_, staged_resource),) = detector.file.collect_asset_docs()
             root = staged_resource["root"]
@@ -166,51 +170,51 @@ class MXRasterFlyer(MXFlyer):
             }
 
         seq_id = self._staged_resource["seq_id"]
-        # Full absolute path to the master .h5 file. Emitted with root="" so the
-        # StreamResource uri (root + resource_path) resolves directly to it.
         master_file = self._staged_resource["master_file"]
-        # Keep the master file reference available for any downstream use.
         detector._master_file = master_file
 
-        # Number of frames in this raster row (same for every row). Used to
-        # build StreamDatum indices {start: 0, stop: M}. Falls back to the cam
-        # value if the per-row count was not supplied.
         num_images = self._num_images
         if num_images is None:
             num_images = int(detector.cam.num_images.get())
 
-        # Row N maps to the (N + 1)-th linked dataset inside the master file.
-        # This is a single linked DATASET (not the entry/data group), so it is
-        # routed to the plain application/x-hdf5 adapter via a distinct spec
-        # (AD_EIGER_MX_RASTER), avoiding the eiger link-expanding adapter which
-        # walks .keys() on a group.
-        dataset = f"entry/data/data_{self._row_index + 1:06d}"
+        docs = []
 
-        resource_uid = str(uuid.uuid4())
-        resource_doc = {
-            "uid": resource_uid,
-            "spec": "AD_EIGER_MX_RASTER",
-            "root": "",
-            "resource_path": master_file,
-            "resource_kwargs": {"seq_id": seq_id, "dataset": dataset},
-            "path_semantics": "posix",
-        }
+        # Emit the Resource document exactly once (row 0).
+        if self._resource_uid is None:
+            self._resource_uid = str(uuid.uuid4())
+            resource_doc = {
+                "uid": self._resource_uid,
+                "spec": "AD_EIGER_MX_RASTER",
+                "root": "",
+                "resource_path": master_file,
+                "resource_kwargs": {
+                    "seq_id": seq_id,
+                    "dataset": "entry/data",
+                    "multiplier": num_images,
+                    "join_method": "stack",
+                },
+                "path_semantics": "posix",
+            }
+            docs.append(("resource", resource_doc))
 
-        datum_id = f"{resource_uid}/data"
+        # One Datum per row: index i → row i of the raster.
+        datum_id = f"{self._resource_uid}/{self._row_index}"
         detector._datum_ids["data"] = datum_id
         detector._datum_ids["omega"] = None
 
-        return (
-            ("resource", resource_doc),
-            (
-                "datum",
-                {
-                    "resource": resource_uid,
-                    "datum_id": datum_id,
-                    "datum_kwargs": {"data_key": "data", "indices": {"start": 0, "stop": num_images}},
+        docs.append((
+            "datum",
+            {
+                "resource": self._resource_uid,
+                "datum_id": datum_id,
+                "datum_kwargs": {
+                    "data_key": "data",
+                    "indices": {"start": self._row_index, "stop": self._row_index + 1},
                 },
-            ),
-        )
+            },
+        ))
+
+        return tuple(docs)
 
     def describe_collect(self):
         detector = self.detector
@@ -258,7 +262,7 @@ class MXRasterFlyer(MXFlyer):
         # we do not read omega metadata from the master file.
         now = ttime.time()
         data = {
-            f"{self.detector.name}_image": self.detector._datum_ids["data"],
+            f"{self.detector.name}_image": f"{self._resource_uid}/{self._row_index}",
             **self._row_positions,
         }
         yield {
