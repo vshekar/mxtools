@@ -197,7 +197,7 @@ class EigerSingleTriggerV26(SingleTrigger, EigerBaseV26):
             "spec": "AD_EIGER_MX",
             "root": "",
             "resource_path": self._master_file,
-            "resource_kwargs": {"seq_id": seq_id, "dataset": "entry/data"},
+            "resource_kwargs": {"seq_id": seq_id, "dataset": "entry/data", "chunk_shape": (1,)},
             "path_semantics": "posix",
         }
         omega_resource_doc = {

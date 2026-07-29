@@ -192,6 +192,7 @@ class MXRasterFlyer(MXFlyer):
                     "dataset": "entry/data",
                     "multiplier": num_images,
                     "join_method": "stack",
+                    "chunk_shape": (1, 1),
                 },
                 "path_semantics": "posix",
             }
@@ -244,7 +245,7 @@ class MXRasterFlyer(MXFlyer):
                     detector.cam.array_size.array_size_y.get(),
                     detector.cam.array_size.array_size_x.get(),
                 ],
-                "dims": ["images", "row", "column"],
+                "dims": ["scan_row", "scan_step", "row", "column"],
                 "external": "FILESTORE:",
             },
             # Plan-supplied row start/end positions. These are not stored in the
