@@ -240,10 +240,11 @@ class MXRasterFlyer(MXFlyer):
                 # from the StreamDatum indices; the consolidator stacks frames
                 # into (num_images_per_row, row, column).
                 "shape": [
+                    1,
                     detector.cam.array_size.array_size_y.get(),
                     detector.cam.array_size.array_size_x.get(),
                 ],
-                "dims": ["row", "column"],
+                "dims": ["images", "row", "column"],
                 "external": "FILESTORE:",
             },
             # Plan-supplied row start/end positions. These are not stored in the

@@ -62,10 +62,11 @@ class MXFlyer:
                 # from the StreamDatum indices, so this describes a single
                 # frame; the consolidator stacks frames into (N, row, column).
                 "shape": [
+                    1,
                     self.detector.cam.array_size.array_size_y.get(),
                     self.detector.cam.array_size.array_size_x.get(),
                 ],
-                "dims": ["row", "column"],
+                "dims": ["images", "row", "column"],
                 "external": "FILESTORE:",
             },
             "omega": {
